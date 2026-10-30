@@ -1,0 +1,121 @@
+#include "tcp_server.h"
+#include <cerrno>
+#include <cstring>
+#include <iostream>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+TcpServer::TcpServer(int port)
+    : port_(port) { }
+
+void TcpServer::start() {
+    int listenfd = init_listen(); // 初始化监听socket
+    kvstore_.init(16); // 初始化KV存储
+    // 设置连接接受回调函数
+    reactor_.set_listener(listenfd, [this](int fd, int event, void* arg) { this->accept_cb(fd, event, arg); });
+    std::cout << "init finish, listening...\n";
+    reactor_.loop(); // 进入事件循环
+}
+
+int TcpServer::init_listen() {
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("socket create failed");
+        return -1;
+    }
+    // 端口复用，解决 TIME_WAIT 无法快速重启
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt SO_REUSEADDR failed");
+        close(sockfd);
+        return -1;
+    }
+    sockaddr_in servaddr { }; // 服务器地址结构
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY); // 监听所有网络接口
+    servaddr.sin_port = htons(port_); // 设置端口
+    int n = bind(sockfd, (sockaddr*)&servaddr, sizeof(servaddr)); // 绑定地址
+    if (n < 0) {
+        perror("bind failed");
+        close(sockfd);
+        return -1;
+    }
+    n = listen(sockfd, 10);
+    if (n < 0) {
+        perror("listen failed");
+        close(sockfd);
+        return -1;
+    }
+    std::cout << "listen port:" << port_ << " sockfd:" << sockfd << "\n";
+    return sockfd;
+}
+
+void TcpServer::accept_cb(int fd, int event, void* arg) {
+    sockaddr_in cli { };
+    socklen_t len = sizeof(cli);
+    int clientfd = accept(fd, (sockaddr*)&cli, &len);
+    if (clientfd < 0)
+        return;
+    Reactor* r = (Reactor*)arg;
+    Connection* conn = r->get_conn(clientfd);
+    conn->fd_ = clientfd;
+    conn->rcount_ = 0;
+    conn->wcount_ = 0;
+    conn->next_len_ = max_buffer_len;
+    conn->cb_ = [this](int fd, int event, void* arg) { this->recv_cb(fd, event, arg); };
+    epoll_event ev { };
+    ev.data.fd = clientfd;
+    ev.events = EPOLLIN;
+    epoll_ctl(r->get_epfd_(), EPOLL_CTL_ADD, clientfd, &ev);
+    std::cout << "client connect:" << clientfd << "\n";
+}
+
+void TcpServer::recv_cb(int fd, int event, void* arg) {
+    Reactor* r = (Reactor*)arg;
+    Connection* conn = r->get_conn(fd);
+    if (conn == nullptr) {
+        return;
+    }
+    int n = recv(fd, conn->rbuffer_ + conn->rcount_, conn->next_len_, 0);
+    if (n <= 0) {
+        epoll_ctl(r->get_epfd_(), EPOLL_CTL_DEL, fd, nullptr);
+        close(fd);
+        return;
+    }
+    conn->rcount_ += n;
+    std::string res = kvstore_.protocal(conn->rbuffer_, conn->rcount_);
+    // 防止wbuffer越界！
+    if (res.size() >= max_buffer_len) {
+        res = "resp too long\r\n";
+    }
+    const char* p = res.c_str();
+    memcpy(conn->wbuffer_, p, res.size());
+    conn->wcount_ = res.size();
+    conn->rcount_ = 0;
+    memset(conn->rbuffer_, 0, max_buffer_len);
+    conn->cb_ = [this](int fd, int event, void* arg) { this->send_cb(fd, event, arg); };
+    epoll_event ev { };
+    ev.data.fd = fd;
+    ev.events = EPOLLOUT;
+    int ret = epoll_ctl(r->get_epfd_(), EPOLL_CTL_MOD, fd, &ev);
+    (void)ret;
+}
+
+void TcpServer::send_cb(int fd, int event, void* arg) {
+    Reactor* r = (Reactor*)arg;
+    Connection* conn = r->get_conn(fd);
+    int n = send(fd, conn->wbuffer_, conn->wcount_, 0);
+    if (n <= 0) {
+        close(fd);
+        return;
+    }
+    conn->wcount_ -= n;
+    memset(conn->wbuffer_, 0, max_buffer_len);
+    // 切回读
+    conn->cb_ = [this](int fd, int event, void* arg) { this->recv_cb(fd, event, arg); };
+    epoll_event ev { };
+    ev.data.fd = fd;
+    ev.events = EPOLLIN;
+    epoll_ctl(r->get_epfd_(), EPOLL_CTL_MOD, fd, &ev);
+}
