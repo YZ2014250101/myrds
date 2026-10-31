@@ -62,7 +62,7 @@ public:
 
     int splitTokens(std::vector<std::string>& tokens, const std::string& msg);
 
-    std::string protocal(char* buffer, size_t max_buffer_len);
+    std::string protocal(const char* buffer, size_t max_buffer_len);
 
 private:
     Skiplist _sl;

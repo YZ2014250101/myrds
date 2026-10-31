@@ -1,4 +1,5 @@
 #include "kv_store.h"
+#include "../portocol/resp_parser.h"
 KVStore::KVStore() { }
 
 KVStore::~KVStore() {
@@ -111,7 +112,7 @@ int KVStore::parseCmd(const std::vector<std::string> tokens, int len) {
     return UNKNOWN;
 }
 
-std::string KVStore::protocal(char* buffer, size_t n) {
+std::string KVStore::protocal(const char* buffer, size_t n) {
     std::string msg(buffer, n);
     std::vector<std::string> tokens;
     int num_tokens = splitTokens(tokens, msg);
@@ -121,78 +122,95 @@ std::string KVStore::protocal(char* buffer, size_t n) {
     switch (user_cmd) {
     case SET:
         if (tokens.size() != 3) {
-            out_val = "err: SET need key value";
+            out_val = "SET need key value";
+            out_val = resp_error(out_val);
             break;
         }
         if (dictSet(tokens[1], tokens[2])) {
             out_val = "set ok";
+            out_val = resp_simple_string(out_val);
         } else {
             out_val = "set fail";
+            out_val = resp_error(out_val);
         }
         break;
     case GET: {
         if (tokens.size() != 2) {
-            out_val = "err: GET need key";
+            out_val = "GET need key";
+            out_val = resp_error(out_val);
             break;
         }
         std::string val;
         if (dictGet(tokens[1], val)) {
             out_val = "get " + val;
+            out_val = resp_simple_string(out_val);
         } else {
             out_val = "not found";
+            out_val = resp_error(out_val);
         }
         break;
     }
     case DEL:
         if (tokens.size() != 2) {
-            out_val = "err: DEL need key";
+            out_val = "DEL need key";
+            out_val = resp_error(out_val);
             break;
         }
         if (dictDel(tokens[1])) {
             out_val = "del ok";
+            out_val = resp_simple_string(out_val);
         } else {
             out_val = "del fail";
+            out_val = resp_error(out_val);
         }
         break;
     case EXISTS:
         if (tokens.size() != 2) {
-            out_val = "err: EXISTS need key";
+            out_val = "EXISTS need key";
+            out_val = resp_error(out_val);
         }
         if (dictExists(tokens[1])) {
-            out_val = "your key exists";
+            out_val = resp_integer(1);
         } else {
-            out_val = "your key not exists";
+            out_val = resp_integer(0);
         }
         break;
     case EXPIRE:
         if (tokens.size() != 3) {
-            out_val = "err: EXPIRE need key seconds";
+            out_val = "EXPIRE need key seconds";
+            out_val = resp_error(out_val);
         }
         if (dictExpire(tokens[1], std::stoi(tokens[2]))) {
             out_val = "expire ok";
+            out_val = resp_simple_string(out_val);
         } else {
             out_val = "expire fail";
+            out_val = resp_error(out_val);
         }
         break;
     case TTL:
         if (tokens.size() != 2) {
-            out_val = "err: TTL need key";
+            out_val = "TTL need key";
+            out_val = resp_error(out_val);
         }
-        out_val = "ttl " + std::to_string(dictTtl(tokens[1])) + "\n";
+        out_val = "ttl " + std::to_string(dictTtl(tokens[1]));
+        out_val = resp_simple_string(out_val);
         break;
     case KEYS:
         out_val = "keys ";
         for (const auto& key : dictKeys()) {
             out_val += key + " ";
         }
+        out_val = resp_bulk_string(out_val);
         break;
     case UNKNOWN:
         out_val = "unknown cmd";
+        out_val = resp_error(out_val);
         break;
     default:
         out_val = "unknown cmd";
+        out_val = resp_error(out_val);
         break;
     }
-    out_val += "\n";
     return out_val;
 }

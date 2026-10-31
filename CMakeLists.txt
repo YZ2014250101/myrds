@@ -13,9 +13,11 @@ include_directories(src/store)
 
 set(SRC_LIST
     src/main.cpp
+    src/portocol/resp_parser.cpp
     src/store/dict.cpp
     src/store/kv_store.cpp
     src/store/skiplist.cpp
     src/reactor/reactor.cpp
+    src/tcp/tcp_server.cpp
 )
 add_executable(main ${SRC_LIST})

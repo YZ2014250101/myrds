@@ -1,4 +1,5 @@
 #pragma once
+#include "../portocol/resp_parser.h"
 #include <functional>
 #include <sys/epoll.h>
 #include <vector>
@@ -18,7 +19,7 @@ public:
     char wbuffer_[max_buffer_len] { 0 }; // 写缓冲区，用于存储待发送的数据
     size_t wcount_ { 0 }; // 写缓冲区中待发送的数据长度
     size_t next_len_ = max_buffer_len; // 下次期望读取的数据长度
-
+    RespParser parser_;
     using Callback = std::function<void(int fd, int events, void* arg)>;
     Callback cb_;
 };

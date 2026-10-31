@@ -1,3 +1,0 @@
-/home/yjc/linux_code/myrds/build/CMakeFiles/main.dir
-/home/yjc/linux_code/myrds/build/CMakeFiles/edit_cache.dir
-/home/yjc/linux_code/myrds/build/CMakeFiles/rebuild_cache.dir

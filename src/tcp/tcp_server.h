@@ -34,4 +34,5 @@ private:
     void accept_cb(int fd, int event, void* arg);
     void recv_cb(int fd, int event, void* arg);
     void send_cb(int fd, int event, void* arg);
+    std::string CmdToRawString(const RespCmd& cmd);
 };
