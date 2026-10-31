@@ -90,6 +90,8 @@ public:
     DictEntry* findEntry(HashTable* ht, const std::string& key);
 
     HashTable* getHashTable(int idx) { return &ht[idx]; }
+    
+    std::vector<DictEntry> getAllValidEntries();
 
 private:
     // 哈希函数

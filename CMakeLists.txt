@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 调试模式 + 警告全开，抓UB/隐患
 set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_CXX_FLAGS "-g -fsanitize=address -fno-omit-frame-pointer")
 add_compile_options(-Wall -Wextra -g)
 
 # 头文件目录，让所有源文件可以直接 include "dict.h"

@@ -229,3 +229,28 @@ bool Dict::needExpand() {
     }
     return static_cast<double>(ht[0].used) / ht[0].size >= LOAD_FACTOR;
 }
+
+std::vector<DictEntry> Dict::getAllValidEntries() {
+    std::vector<DictEntry> res;
+    uint64_t now
+        = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+              .count();
+    // rehash 期间 ht[0]、ht[1] 都要遍历
+    for (int table_idx = 0; table_idx < 2; table_idx++) {
+        HashTable* ht = &this->ht[table_idx];
+        if (ht->table == nullptr)
+            continue;
+
+        for (size_t i = 0; i < ht->size; i++) {
+            DictEntry* cur = ht->table[i];
+            while (cur != nullptr) {
+                DictEntry* next = cur->next; // 先存next，防止删的时候断链
+                if (cur->expire_ts == 0 || cur->expire_ts > now) {
+                    res.push_back(*cur);
+                }
+                cur = next;
+            }
+        }
+    }
+    return res;
+}

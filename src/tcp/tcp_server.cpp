@@ -1,16 +1,45 @@
 #include "tcp_server.h"
+#include "kv_store.h"
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
+#include <signal.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+static KVStore* g_kv = nullptr;
+
+static void sigchld_handler(int sig) {
+    (void)sig;
+    char ch = 1;
+    // 只写管道唤醒epoll，仅此而已
+    write(g_kv->sig_pipe_[1], &ch, 1);
+}
 TcpServer::TcpServer(int port)
     : port_(port) { }
-
 void TcpServer::start() {
+    static bool sig_inited = false;
+    if (!sig_inited) {
+        // 绑定全局指针
+        g_kv = &kvstore_;
+        // 注册SIGCHLD信号
+        signal(SIGCHLD, sigchld_handler);
+
+        int pipe_read_fd = kvstore_.get_sig_pipe_read_fd();
+        // 注册管道读fd到reactor，回调函数签名和accept_cb一模一样
+        reactor_.set_listener(pipe_read_fd, [this](int fd, int events, void* arg) {
+            // 这里就是epoll读到管道可读，主线程安全执行
+            (void)events;
+            (void)arg;
+            kvstore_.on_sigchld_pipe();
+        });
+
+        sig_inited = true;
+    }
     int listenfd = init_listen(); // 初始化监听socket
     kvstore_.init(16); // 初始化KV存储
     // 设置连接接受回调函数
@@ -29,6 +58,11 @@ int TcpServer::init_listen() {
     int opt = 1;
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("setsockopt SO_REUSEADDR failed");
+        close(sockfd);
+        return -1;
+    }
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt SO_REUSEPORT failed");
         close(sockfd);
         return -1;
     }
