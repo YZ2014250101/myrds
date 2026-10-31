@@ -1,6 +1,7 @@
 #ifndef KVSTORE_H
 #define KVSTORE_H
 
+#include "../portocol/resp_parser.h"
 #include "dict.h"
 #include "skiplist.h"
 #include <string.h>
@@ -64,9 +65,20 @@ public:
 
     std::string protocal(const char* buffer, size_t max_buffer_len);
 
+    // 启动加载aof.log，回放命令
+    bool loadAof();
+
+    // 追加一条写命令到AOF
+    void appendAof(const std::string& raw_resp_cmd);
+    
+    std::string CmdToRawString(const RespCmd& cmd);
+
 private:
     Skiplist _sl;
     Dict dict_;
+    RespParser AofParser_;
+    int aof_fd_ { -1 };
+    bool aof_enable_ { true };
 };
 
 #endif

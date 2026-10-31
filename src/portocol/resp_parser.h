@@ -18,9 +18,14 @@ public:
     bool feed(const char* data, size_t len);
     RespCmd getCmd() const { return cmd_; }
     void reset();
+    // 获取一条就绪命令，同时删掉
+    bool popCmd(RespCmd& out);
+    // 查询有没有就绪命令
+    bool hasCmd() const { return !cmds_.empty(); }
 
 private:
     RespState state_;
+    std::vector<RespCmd> cmds_;
     RespCmd cmd_;
     int arrayRemain_;
     int bulkRemain_;

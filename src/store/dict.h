@@ -25,11 +25,35 @@ struct HashTable {
     size_t used; // 当前元素个数
 
     HashTable();
+    HashTable(const HashTable&) = delete;
+    HashTable& operator=(const HashTable&) = delete;
+
+    HashTable(HashTable&& other) noexcept {
+        table = other.table;
+        size = other.size;
+        used = other.used;
+        other.table = nullptr;
+        other.size = 0;
+        other.used = 0;
+    }
+    HashTable& operator=(HashTable&& other) noexcept {
+        if (this == &other)
+            return *this;
+        clear(); // 先释放自己持有的资源
+        table = other.table;
+        size = other.size;
+        used = other.used;
+        other.table = nullptr;
+        other.size = 0;
+        other.used = 0;
+        return *this;
+    }
     ~HashTable();
 
     // 初始化桶，size必须是2的幂
     bool init(size_t sz);
     void freeEntry(DictEntry* e);
+    void resetTable();
     void clear();
 };
 

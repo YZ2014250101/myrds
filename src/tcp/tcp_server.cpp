@@ -89,7 +89,8 @@ void TcpServer::recv_cb(int fd, int event, void* arg) {
     bool parse_ok = conn->parser_.feed(conn->rbuffer_ + conn->rcount_ - n, n);
     std::cerr << "[parse_ok] = " << parse_ok << std::endl;
     if (parse_ok) {
-        RespCmd cmd = conn->parser_.getCmd();
+        RespCmd cmd;
+        conn->parser_.popCmd(cmd);
         std::cerr << "cmd:" << cmd.cmd << std::endl;
         // 命令统一转小写，兼容 get / GET
         std::transform(cmd.cmd.begin(), cmd.cmd.end(), cmd.cmd.begin(), ::tolower);

@@ -10,6 +10,13 @@ void RespParser::reset() {
     tmpBuf_.clear();
     cmd_.clear();
 }
+bool RespParser::popCmd(RespCmd& out) {
+    if (cmds_.empty())
+        return false;
+    out = cmds_.front();
+    cmds_.erase(cmds_.begin());
+    return true;
+}
 bool RespParser::feed(const char* data, size_t len) {
     for (size_t i = 0; i < len; ++i) {
         char ch = data[i];
@@ -43,12 +50,21 @@ bool RespParser::feed(const char* data, size_t len) {
                 arrayRemain_--;
                 if (arrayRemain_ <= 0) {
                     state_ = RespState::READY;
-                    return true;
+                    cmds_.push_back(cmd_); // 成品丢进vector，继续循环解析剩下字节
+                    cmd_.clear();
                 }
                 state_ = RespState::ARRAY_LEN;
+            } else if (state_ == RespState::ERROR) {
+                // 错误状态，直接跳过，等待下一个*
+                if (line[0] == '*') {
+                    state_ = RespState::ARRAY_LEN;
+                    cmd_.clear();
+                    arrayRemain_ = std::atoi(line.c_str());
+                }
             }
         }
     }
+    return !cmds_.empty();
 }
 
 std::string resp_simple_string(const std::string& s) { return "+" + s + "\r\n"; }

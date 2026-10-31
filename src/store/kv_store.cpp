@@ -1,9 +1,19 @@
 #include "kv_store.h"
 #include "../portocol/resp_parser.h"
-KVStore::KVStore() { }
+#include <fcntl.h>
+#include <fstream>
+#include <unistd.h>
+
+KVStore::KVStore() {
+    // 构造函数末尾，加载AOF
+    loadAof();
+}
 
 KVStore::~KVStore() {
-    // Skiplist析构会自动释放所有节点，不用额外写
+    if (aof_fd_ >= 0) {
+        ::close(aof_fd_);
+        aof_fd_ = -1;
+    }
 }
 bool KVStore::dictSet(const std::string& key, const std::string& value, uint64_t expire_at_ms) {
     dict_.set(key, value, expire_at_ms);
@@ -113,11 +123,11 @@ int KVStore::parseCmd(const std::vector<std::string> tokens, int len) {
 }
 
 std::string KVStore::protocal(const char* buffer, size_t n) {
+    std::string raw_resp(buffer, n);
     std::string msg(buffer, n);
     std::vector<std::string> tokens;
     int num_tokens = splitTokens(tokens, msg);
     int user_cmd = parseCmd(tokens, num_tokens);
-
     std::string out_val;
     switch (user_cmd) {
     case SET:
@@ -127,8 +137,9 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
             break;
         }
         if (dictSet(tokens[1], tokens[2])) {
-            out_val = "set ok";
+            out_val = "OK";
             out_val = resp_simple_string(out_val);
+            appendAof(raw_resp);
         } else {
             out_val = "set fail";
             out_val = resp_error(out_val);
@@ -142,11 +153,10 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
         }
         std::string val;
         if (dictGet(tokens[1], val)) {
-            out_val = "get " + val;
-            out_val = resp_simple_string(out_val);
+            // GET 标准用bulk字符串
+            out_val = resp_bulk_string(val);
         } else {
-            out_val = "not found";
-            out_val = resp_error(out_val);
+            out_val = resp_null();
         }
         break;
     }
@@ -157,17 +167,17 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
             break;
         }
         if (dictDel(tokens[1])) {
-            out_val = "del ok";
-            out_val = resp_simple_string(out_val);
+            out_val = resp_integer(1);
+            appendAof(raw_resp);
         } else {
-            out_val = "del fail";
-            out_val = resp_error(out_val);
+            out_val = resp_integer(0);
         }
         break;
     case EXISTS:
         if (tokens.size() != 2) {
             out_val = "EXISTS need key";
             out_val = resp_error(out_val);
+            break;
         }
         if (dictExists(tokens[1])) {
             out_val = resp_integer(1);
@@ -179,38 +189,84 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
         if (tokens.size() != 3) {
             out_val = "EXPIRE need key seconds";
             out_val = resp_error(out_val);
+            break;
         }
         if (dictExpire(tokens[1], std::stoi(tokens[2]))) {
-            out_val = "expire ok";
-            out_val = resp_simple_string(out_val);
+            out_val = resp_integer(1);
+            appendAof(raw_resp);
         } else {
-            out_val = "expire fail";
-            out_val = resp_error(out_val);
+            out_val = resp_integer(0);
         }
         break;
     case TTL:
         if (tokens.size() != 2) {
             out_val = "TTL need key";
             out_val = resp_error(out_val);
+            break;
         }
-        out_val = "ttl " + std::to_string(dictTtl(tokens[1]));
-        out_val = resp_simple_string(out_val);
+        // 删掉手动 + "\n"！！
+        out_val = resp_integer(dictTtl(tokens[1]));
         break;
-    case KEYS:
-        out_val = "keys ";
+    case KEYS: {
+        // KEYS 要返回 RESP数组 *N，你现在简单bulk先凑合用，后面再改数组
+        std::string tmp;
         for (const auto& key : dictKeys()) {
-            out_val += key + " ";
+            tmp += key + " ";
         }
-        out_val = resp_bulk_string(out_val);
+        out_val = resp_bulk_string(tmp);
         break;
+    }
     case UNKNOWN:
-        out_val = "unknown cmd";
-        out_val = resp_error(out_val);
-        break;
     default:
         out_val = "unknown cmd";
         out_val = resp_error(out_val);
         break;
     }
     return out_val;
+}
+// 加载AOF：打开aof.log，循环读取、解析、回放命令
+bool KVStore::loadAof() {
+    if (!aof_enable_) {
+        return true;
+    }
+
+    std::ifstream fin("aof.log");
+    if (fin.is_open()) {
+        std::string line;
+        while (std::getline(fin, line)) {
+            if (line.empty())
+                continue;
+            fprintf(stderr, "[AOF] replay: %s\n", line.c_str());
+            protocal(line.data(), line.size());
+        }
+        fin.close();
+        fprintf(stderr, "[AOF] load aof done\n");
+    } else {
+        fprintf(stderr, "[AOF] aof.log not exist, skip load\n");
+    }
+
+    // 打开追加写句柄，供后续appendAof使用
+    aof_fd_ = open("aof.log", O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (aof_fd_ < 0) {
+        fprintf(stderr, "[AOF] open aof write fail: %s\n", strerror(errno));
+        aof_enable_ = false;
+        return false;
+    }
+    return true;
+}
+
+// 追加一条原始RESP命令到AOF
+void KVStore::appendAof(const std::string& cmd_line) {
+    if (!aof_enable_ || aof_fd_ < 0)
+        return;
+    std::string line = cmd_line + "\n";
+    write(aof_fd_, line.data(), line.size());
+}
+std::string KVStore::CmdToRawString(const RespCmd& cmd) {
+    std::string out = cmd.cmd;
+    for (auto& arg : cmd.args) {
+        out += " ";
+        out += arg;
+    }
+    return out;
 }

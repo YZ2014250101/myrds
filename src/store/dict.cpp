@@ -41,6 +41,14 @@ void HashTable::clear() {
         used = 0;
     }
 }
+void HashTable::resetTable() {
+    if (table) {
+        delete[] table;
+        table = nullptr;
+        size = 0;
+        used = 0;
+    }
+}
 Dict::Dict()
     : rehash_idx(-1) {
     ht[0].init(INIT_SIZE);
@@ -73,8 +81,8 @@ void Dict::set(const std::string& key, const std::string& value, uint64_t expire
                 ht[0].used--;
             }
         }
-        ht[0].clear();
-        ht[0] = new_ht;
+        ht[0].resetTable();
+        ht[0] = std::move(new_ht);
     }
     size_t idx = hashKey(key) & (ht[0].size - 1);
     DictEntry* new_node = new DictEntry { key, value, expire_ms };
