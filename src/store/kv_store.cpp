@@ -1,10 +1,12 @@
 #include "kv_store.h"
 #include "../portocol/resp_parser.h"
+#include <chrono>
 #include <fcntl.h>
 #include <fstream>
 #include <unistd.h>
 
 KVStore::KVStore() {
+    loadRdb();
     // 构造函数末尾，加载AOF
     loadAof();
 }
@@ -218,6 +220,13 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
     }
     case UNKNOWN:
     default:
+        bool ok = saveRdb();
+        if (ok) {
+            // 返回ok给客户端
+            out_val += "OK";
+        } else {
+            out_val += "save fail";
+        }
         out_val = "unknown cmd";
         out_val = resp_error(out_val);
         break;
@@ -269,4 +278,83 @@ std::string KVStore::CmdToRawString(const RespCmd& cmd) {
         out += arg;
     }
     return out;
+}
+bool KVStore::saveRdb(const std::string& path) {
+    FILE* fp = fopen(path.c_str(), "wb");
+    if (!fp) {
+        fprintf(stderr, "[RDB] save open %s failed\n", path.c_str());
+        return false;
+    }
+
+    auto keys = dict_.keys();
+    uint64_t now
+        = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+              .count();
+
+    for (auto& k : keys) {
+        std::string v;
+        // 拿value和过期时间
+        DictEntry* e = dict_.findEntry(dict_.getHashTable(0), k);
+        if (!e)
+            continue;
+        // 过期key跳过
+        if (e->expire_ts != 0 && e->expire_ts < now)
+            continue;
+
+        // 写入格式：
+        // key_len(uint32) + key_data
+        // val_len(uint32) + val_data
+        // expire_ts(uint64)
+        uint32_t klen = (uint32_t)k.size();
+        uint32_t vlen = (uint32_t)e->val.size();
+        fwrite(&klen, sizeof(klen), 1, fp);
+        fwrite(k.data(), 1, klen, fp);
+        fwrite(&vlen, sizeof(vlen), 1, fp);
+        fwrite(e->val.data(), 1, vlen, fp);
+        fwrite(&e->expire_ts, sizeof(uint64_t), 1, fp);
+    }
+
+    fclose(fp);
+    fprintf(stderr, "[RDB] save success, key count: %zu\n", keys.size());
+    return true;
+}
+
+// 加载RDB快照
+bool KVStore::loadRdb(const std::string& path) {
+    FILE* fp = fopen(path.c_str(), "rb");
+    if (!fp) {
+        fprintf(stderr, "[RDB] dump.rdb not found, skip rdb load\n");
+        return true;
+    }
+
+    uint32_t klen, vlen;
+    uint64_t expire_ts;
+    size_t cnt = 0;
+
+    while (true) {
+        // 读key长度
+        if (fread(&klen, sizeof(klen), 1, fp) != 1)
+            break;
+        // 读key
+        std::string key(klen, 0);
+        if (fread(&key[0], 1, klen, fp) != klen)
+            break;
+
+        // 读value长度
+        if (fread(&vlen, sizeof(vlen), 1, fp) != 1)
+            break;
+        std::string val(vlen, 0);
+        if (fread(&val[0], 1, vlen, fp) != vlen)
+            break;
+
+        // 读过期时间
+        if (fread(&expire_ts, sizeof(uint64_t), 1, fp) != 1)
+            break;
+
+        dictSet(key, val, expire_ts);
+        cnt++;
+    }
+    fclose(fp);
+    fprintf(stderr, "[RDB] load finish, loaded %zu keys\n", cnt);
+    return true;
 }

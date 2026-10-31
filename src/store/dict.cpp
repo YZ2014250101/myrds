@@ -69,7 +69,7 @@ void Dict::set(const std::string& key, const std::string& value, uint64_t expire
         size_t new_size = ht[0].size * 2;
         HashTable new_ht;
         new_ht.init(new_size);
-        for (int i = 0; i < ht[0].size; i++) {
+        for (size_t i = 0; i < ht[0].size; i++) {
             DictEntry* cur = ht[0].table[i];
             while (cur) {
                 DictEntry* next = cur->next;

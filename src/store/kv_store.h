@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+
 #define max_tokens 32
 enum CmdType { SET, GET, DEL, EXISTS, KEYS, EXPIRE, TTL, UNKNOWN };
 
@@ -70,6 +71,9 @@ public:
 
     // 追加一条写命令到AOF
     void appendAof(const std::string& raw_resp_cmd);
+
+    bool saveRdb(const std::string &path = "dump.rdb");
+    bool loadRdb(const std::string& path = "dump.rdb");
     
     std::string CmdToRawString(const RespCmd& cmd);
 

@@ -86,12 +86,14 @@ public:
     // 主动尝试rehash一步；你第一阶段可以先不调用
     void rehashStep();
 
+    // 在一张ht里查找entry
+    DictEntry* findEntry(HashTable* ht, const std::string& key);
+
+    HashTable* getHashTable(int idx) { return &ht[idx]; }
+
 private:
     // 哈希函数
     size_t hashKey(const std::string& key);
-
-    // 在一张ht里查找entry
-    DictEntry* findEntry(HashTable* ht, const std::string& key);
 
     // 扩容触发判断
     bool needExpand();
