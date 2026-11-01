@@ -16,6 +16,7 @@ set(SRC_LIST
     src/main.cpp
     src/util/util.cpp
     src/protocol/resp_parser.cpp
+    src/store/rdb_snapshot.cpp
     src/store/aof_log.cpp
     src/store/dict.cpp
     src/store/kv_store.cpp

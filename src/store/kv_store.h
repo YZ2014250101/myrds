@@ -3,6 +3,7 @@
 #include "../protocol/resp_parser.h"
 #include "aof_log.h"
 #include "dict.h"
+#include "rdb_snapshot.h"
 #include "skiplist.h"
 #include <memory>
 #include <string.h>
@@ -68,11 +69,11 @@ public:
 
     std::string protocal(const char* buffer, size_t max_buffer_len);
 
-    void setAofLog(std::unique_ptr<AofLog> aof);
-
+    void setAofLog(std::unique_ptr<AofLog> aof) { aof_log_ = std::move(aof); }
     void loadAof() { aof_log_->load(); }
-    bool saveRdb(const std::string& path = "dump.rdb");
-    bool loadRdb(const std::string& path = "dump.rdb");
+
+    bool saveRdb(const std::string& path = "dump.rdb") { return rdb_snapshot_.save(path, &dict_); }
+    bool loadRdb(const std::string& path = "dump.rdb") { return rdb_snapshot_.load(path, &dict_); }
     std::string CmdToRawString(const RespCmd& cmd);
 
 private:
@@ -80,4 +81,5 @@ private:
     Dict dict_;
     RespParser AofParser_;
     std::unique_ptr<AofLog> aof_log_;
+    RDBSnapshot rdb_snapshot_;
 };
