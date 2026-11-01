@@ -14,7 +14,9 @@ include_directories(src/store)
 
 set(SRC_LIST
     src/main.cpp
-    src/portocol/resp_parser.cpp
+    src/util/util.cpp
+    src/protocol/resp_parser.cpp
+    src/store/aof_log.cpp
     src/store/dict.cpp
     src/store/kv_store.cpp
     src/store/skiplist.cpp

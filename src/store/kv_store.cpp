@@ -1,36 +1,12 @@
 #include "kv_store.h"
-#include "../portocol/resp_parser.h"
 #include <chrono>
 #include <fcntl.h>
-#include <fstream>
-#include <iostream>
 #include <sys/wait.h>
 #include <unistd.h>
 
-KVStore::KVStore() {
-    loadRdb();
-    // 构造函数末尾，加载AOF
-    loadAof();
-    // 创建管道
-    if (pipe(sig_pipe_) < 0) {
-        perror("pipe");
-        abort();
-    }
-    // 设置读、写端都为非阻塞
-    auto set_nonblock = [](int fd) {
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    };
-    set_nonblock(sig_pipe_[0]);
-    set_nonblock(sig_pipe_[1]);
-}
+KVStore::KVStore() { }
 
-KVStore::~KVStore() {
-    if (aof_fd_ >= 0) {
-        ::close(aof_fd_);
-        aof_fd_ = -1;
-    }
-}
+KVStore::~KVStore() { }
 bool KVStore::dictSet(const std::string& key, const std::string& value, uint64_t expire_at_ms) {
     dict_.set(key, value, expire_at_ms);
     return true;
@@ -135,6 +111,9 @@ int KVStore::parseCmd(const std::vector<std::string> tokens, int len) {
     if (cmd == "keys") {
         return KEYS;
     }
+    if (cmd == "save") {
+        return SAVE;
+    }
     if (cmd == "bgrewriteaof") {
         return BGREWRITEAOF;
     }
@@ -142,7 +121,6 @@ int KVStore::parseCmd(const std::vector<std::string> tokens, int len) {
 }
 
 std::string KVStore::protocal(const char* buffer, size_t n) {
-    std::string raw_resp(buffer, n);
     std::string msg(buffer, n);
     std::vector<std::string> tokens;
     int num_tokens = splitTokens(tokens, msg);
@@ -158,7 +136,7 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
         if (dictSet(tokens[1], tokens[2])) {
             out_val = "OK";
             out_val = resp_simple_string(out_val);
-            appendAof(raw_resp);
+            aof_log_->append(msg);
         } else {
             out_val = "set fail";
             out_val = resp_error(out_val);
@@ -187,7 +165,7 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
         }
         if (dictDel(tokens[1])) {
             out_val = resp_integer(1);
-            appendAof(raw_resp);
+            aof_log_->append(msg);
         } else {
             out_val = resp_integer(0);
         }
@@ -212,7 +190,7 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
         }
         if (dictExpire(tokens[1], std::stoi(tokens[2]))) {
             out_val = resp_integer(1);
-            appendAof(raw_resp);
+            aof_log_->append(msg);
         } else {
             out_val = resp_integer(0);
         }
@@ -254,7 +232,8 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
         break;
     }
     case BGREWRITEAOF: {
-        out_val = bgrewriteaof();
+        out_val = aof_log_->bgRewrite(dict_).msg;
+        out_val = resp_simple_string(out_val);
         break;
     }
     case UNKNOWN:
@@ -265,61 +244,9 @@ std::string KVStore::protocal(const char* buffer, size_t n) {
     }
     return out_val;
 }
-// 加载AOF：打开aof.log，循环读取、解析、回放命令
-bool KVStore::loadAof() {
-    if (!aof_enable_) {
-        return true;
-    }
 
-    std::ifstream fin("aof.log");
-    if (fin.is_open()) {
-        std::string line;
-        while (std::getline(fin, line)) {
-            if (line.empty())
-                continue;
-            fprintf(stderr, "[AOF] replay: %s\n", line.c_str());
-            protocal(line.data(), line.size());
-        }
-        fin.close();
-        fprintf(stderr, "[AOF] load aof done\n");
-    } else {
-        fprintf(stderr, "[AOF] aof.log not exist, skip load\n");
-    }
+void KVStore::setAofLog(std::unique_ptr<AofLog> aof) { aof_log_ = std::move(aof); }
 
-    // 打开追加写句柄，供后续appendAof使用
-    aof_fd_ = open("aof.log", O_WRONLY | O_APPEND | O_CREAT, 0644);
-    if (aof_fd_ < 0) {
-        fprintf(stderr, "[AOF] open aof write fail: %s\n", strerror(errno));
-        aof_enable_ = false;
-        return false;
-    }
-    return true;
-}
-
-// 追加一条原始RESP命令到AOF
-void KVStore::appendAof(const std::string& raw_cmd) {
-    if (!aof_enable_ || aof_fd_ < 0)
-        return;
-    FILE* fp = fopen("aof.log", "a");
-    if (fp) {
-        fprintf(fp, "%s\n", raw_cmd.c_str());
-        fflush(fp);
-        fclose(fp);
-    }
-
-    // 2. 如果正在后台重写，额外存入buffer
-    if (rewrite_state_ == REWRITE_IN_PROGRESS) {
-        rewrite_buffer_.push_back(raw_cmd);
-    }
-}
-std::string KVStore::CmdToRawString(const RespCmd& cmd) {
-    std::string out = cmd.cmd;
-    for (auto& arg : cmd.args) {
-        out += " ";
-        out += arg;
-    }
-    return out;
-}
 bool KVStore::saveRdb(const std::string& path) {
     FILE* fp = fopen(path.c_str(), "wb");
     if (!fp) {
@@ -398,95 +325,4 @@ bool KVStore::loadRdb(const std::string& path) {
     fclose(fp);
     fprintf(stderr, "[RDB] load finish, loaded %zu keys\n", cnt);
     return true;
-}
-std::string KVStore::bgrewriteaof() {
-    if (rewrite_state_ == REWRITE_IN_PROGRESS) {
-        return resp_error("rewrite in progress");
-    }
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork fail");
-        return resp_error("fork() failed");
-    }
-    if (pid == 0) {
-        std::cerr << "[CHILD] child start run do_rewrite_work\n";
-        do_rewrite_work();
-        std::cerr << "[CHILD] child exit 0\n";
-        _exit(0);
-    }
-    std::cerr << "[PARENT] fork ok, child pid=" << pid << "\n";
-    rewrite_child_pid_ = pid;
-    rewrite_state_ = REWRITE_IN_PROGRESS;
-    return resp_simple_string("Background append only file rewrite started");
-}
-
-void KVStore::do_rewrite_work() {
-    close(sig_pipe_[0]);
-    close(sig_pipe_[1]);
-    FILE* fp = fopen("aof.tmp", "w");
-    if (!fp) {
-        perror("[Child] fopen aof.tmp failed");
-        _exit(1);
-    }
-    std::cerr << "[Child] open tmp success\n";
-    uint64_t now
-        = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-              .count();
-    // 拿到全部有效entry副本
-    auto entries = dict_.getAllValidEntries();
-    std::cerr << "[Child] entry count = " << entries.size() << "\n";
-    for (auto& entry : entries) {
-        // 你的协议只能分开 SET + EXPIRE
-        fprintf(fp, "SET %s %s\n", entry.key.c_str(), entry.val.c_str());
-        if (entry.expire_ts != 0) {
-            int64_t remain = (entry.expire_ts - now) / 1000;
-            if (remain > 0) {
-                fprintf(fp, "EXPIRE %s %ld\n", entry.key.c_str(), remain);
-            }
-        }
-    }
-    fflush(fp);
-    fsync(fileno(fp));
-    fclose(fp);
-    _exit(0);
-}
-void KVStore::on_sigchld_pipe() {
-    char buf[64];
-    // 把管道里所有字节读完，清空缓冲区
-    while (read(sig_pipe_[0], buf, sizeof(buf)) > 0)
-        ;
-
-    int status;
-    pid_t pid;
-    // 非阻塞收割所有已退出子进程
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        // 是不是我们这次AOF重写的子进程
-        if (pid == rewrite_child_pid_) {
-            finish_rewrite();
-        }
-    }
-}
-void KVStore::finish_rewrite() {
-    // 你之前的代码
-    FILE* fp = fopen("aof.tmp", "a");
-    if (!fp) {
-        rewrite_state_ = REWRITE_NONE;
-        rewrite_child_pid_ = -1;
-        rewrite_buffer_.clear();
-        return;
-    }
-    for (auto& cmd : rewrite_buffer_) {
-        fprintf(fp, "%s\n", cmd.c_str());
-    }
-    fflush(fp);
-    fclose(fp);
-
-    if (rename("aof.tmp", "aof.log") < 0) {
-        perror("rename aof.tmp -> aof.log failed");
-        unlink("aof.tmp");
-    }
-
-    rewrite_buffer_.clear();
-    rewrite_state_ = REWRITE_NONE;
-    rewrite_child_pid_ = -1;
 }

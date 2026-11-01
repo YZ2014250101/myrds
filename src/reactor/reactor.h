@@ -1,5 +1,5 @@
 #pragma once
-#include "../portocol/resp_parser.h"
+#include "../protocol/resp_parser.h"
 #include <functional>
 #include <sys/epoll.h>
 #include <vector>

@@ -1,10 +1,10 @@
-#ifndef KVSTORE_H
-#define KVSTORE_H
+#pragma once
 
-#include "../portocol/resp_parser.h"
+#include "../protocol/resp_parser.h"
+#include "aof_log.h"
 #include "dict.h"
 #include "skiplist.h"
-#include <atomic>
+#include <memory>
 #include <string.h>
 #include <string>
 #include <unistd.h>
@@ -13,10 +13,6 @@
 #define max_tokens 32
 enum CmdType { SET, GET, DEL, EXISTS, KEYS, EXPIRE, TTL, SAVE, BGREWRITEAOF, UNKNOWN };
 // 重写状态
-enum RewriteState {
-    REWRITE_NONE, // 无重写
-    REWRITE_IN_PROGRESS // 正在后台AOF重写
-};
 
 class KVStore {
 public:
@@ -72,33 +68,16 @@ public:
 
     std::string protocal(const char* buffer, size_t max_buffer_len);
 
-    // 启动加载aof.log，回放命令
-    bool loadAof();
+    void setAofLog(std::unique_ptr<AofLog> aof);
 
-    // 追加一条写命令到AOF
-    void appendAof(const std::string& raw_resp_cmd);
-
+    void loadAof() { aof_log_->load(); }
     bool saveRdb(const std::string& path = "dump.rdb");
     bool loadRdb(const std::string& path = "dump.rdb");
-    std::string bgrewriteaof();
-    void do_rewrite_work();
-    void on_sigchld_pipe();
-    void finish_rewrite();
-    int get_sig_pipe_read_fd() const { return sig_pipe_[0]; }
-    int get_sig_pipe_write_fd() const { return sig_pipe_[1]; }
     std::string CmdToRawString(const RespCmd& cmd);
-    int sig_pipe_[2] = { -1, -1 }; // 父子进程通信管道
 
 private:
     Skiplist _sl;
     Dict dict_;
     RespParser AofParser_;
-    int aof_fd_ { -1 };
-    bool aof_enable_ { true };
-    RewriteState rewrite_state_ = REWRITE_NONE;
-    pid_t rewrite_child_pid_ = -1;
-    std::vector<std::string> rewrite_buffer_;
-    std::atomic<bool> child_rewrite_done_flag_ { false };
+    std::unique_ptr<AofLog> aof_log_;
 };
-
-#endif
