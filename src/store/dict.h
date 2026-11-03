@@ -87,10 +87,10 @@ public:
     void rehashStep();
 
     // 在一张ht里查找entry
-    DictEntry* findEntry(HashTable* ht, const std::string& key);
+    DictEntry* findEntry(const std::string& key);
 
     HashTable* getHashTable(int idx) { return &ht[idx]; }
-    
+
     std::vector<DictEntry> getAllValidEntries();
 
 private:
@@ -102,7 +102,8 @@ private:
 
 private:
     HashTable ht[2];
-    int rehash_idx; // -1 代表不在rehash；>=0 代表正在rehash，当前处理桶下标
+    int rehash_idx = -1; // -1 代表不在rehash；>=0 代表正在rehash，当前处理桶下标
+    int ht_idx = 0; // 当前使用的ht下标，0或1
     static constexpr size_t INIT_SIZE = 4;
-    static constexpr double LOAD_FACTOR = 0.75;
+    static constexpr double LOAD_FACTOR = 1;
 };

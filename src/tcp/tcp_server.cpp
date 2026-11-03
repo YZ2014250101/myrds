@@ -10,7 +10,6 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
-
 TcpServer::TcpServer(int port)
     : port_(port) { }
 void TcpServer::start() {
@@ -80,7 +79,6 @@ void TcpServer::accept_cb(int fd, int event, void* arg) {
     ev.data.fd = clientfd;
     ev.events = EPOLLIN;
     epoll_ctl(r->get_epfd_(), EPOLL_CTL_ADD, clientfd, &ev);
-    std::cout << "client connect:" << clientfd << "\n";
 }
 
 void TcpServer::recv_cb(int fd, int event, void* arg) {
@@ -96,13 +94,10 @@ void TcpServer::recv_cb(int fd, int event, void* arg) {
         return;
     }
     conn->rcount_ += n;
-    std::cerr << "[recv] n=" << n << ", rbuffer: " << conn->rbuffer_ << std::endl;
     bool parse_ok = conn->parser_.feed(conn->rbuffer_ + conn->rcount_ - n, n);
-    std::cerr << "[parse_ok] = " << parse_ok << std::endl;
     if (parse_ok) {
         RespCmd cmd;
         conn->parser_.popCmd(cmd);
-        std::cerr << "cmd:" << cmd.cmd << std::endl;
         // 命令统一转小写，兼容 get / GET
         std::transform(cmd.cmd.begin(), cmd.cmd.end(), cmd.cmd.begin(), ::tolower);
 
@@ -110,7 +105,6 @@ void TcpServer::recv_cb(int fd, int event, void* arg) {
         // 调用你原来的 protocal，参数就是拼接好的字符串 + 长度
         std::string res = kvstore_.protocal(raw_cmd_str.c_str(), raw_cmd_str.size());
 
-        std::cerr << "final resp send:" << res << std::endl;
         // 重置parser，准备下一条命令
         conn->parser_.reset();
 
