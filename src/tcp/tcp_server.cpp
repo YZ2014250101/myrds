@@ -94,6 +94,21 @@ void TcpServer::recv_cb(int fd, int event, void* arg) {
         return;
     }
     conn->rcount_ += n;
+    std::string res;
+    if (conn->rcount_ >= max_buffer_len) {
+        res = "-ERR command too long\r\n";
+        conn->rcount_ = 0;
+        memset(conn->rbuffer_, 0, max_buffer_len);
+        memcpy(conn->wbuffer_, res.c_str(), res.size());
+        conn->wcount_ = res.size();
+        // 切换成写事件，触发send_cb
+        conn->cb_ = [this](int fd, int event, void* arg) { this->send_cb(fd, event, arg); };
+        epoll_event ev { };
+        ev.data.fd = fd;
+        ev.events = EPOLLOUT;
+        epoll_ctl(r->get_epfd_(), EPOLL_CTL_MOD, fd, &ev);
+        return;
+    }
     bool parse_ok = conn->parser_.feed(conn->rbuffer_ + conn->rcount_ - n, n);
     if (parse_ok) {
         RespCmd cmd;
@@ -103,7 +118,7 @@ void TcpServer::recv_cb(int fd, int event, void* arg) {
 
         std::string raw_cmd_str = CmdToRawString(cmd);
         // 调用你原来的 protocal，参数就是拼接好的字符串 + 长度
-        std::string res = kvstore_.protocal(raw_cmd_str.c_str(), raw_cmd_str.size());
+        res = kvstore_.protocal(raw_cmd_str.c_str(), raw_cmd_str.size());
 
         // 重置parser，准备下一条命令
         conn->parser_.reset();
