@@ -94,8 +94,16 @@ void TcpServer::recv_cb(int fd, int event, void* arg) {
         return;
     }
     conn->rcount_ += n;
-    bool parse_ok = conn->parser_.feed(conn->rbuffer_ + conn->rcount_ - n, n);
-    if (parse_ok) {
+
+    // 循环解析：缓冲区里可能有多条命令，一条一条解
+    while (true) {
+        // feed 传入【当前全部未消费数据】，parser内部自己消耗、存状态
+        bool parse_ok = conn->parser_.feed(conn->rbuffer_, conn->rcount_);
+        if (!parse_ok) {
+            // 不够一条完整命令，停住，等下一次recv
+            break;
+        }
+        // 解析成功，取出一条命令
         RespCmd cmd;
         conn->parser_.popCmd(cmd);
         // 命令统一转小写，兼容 get / GET
