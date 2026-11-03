@@ -22,9 +22,18 @@ bool HashTable::init(size_t sz) {
     return true;
 }
 void HashTable::freeEntry(DictEntry* node) {
-    if (node) {
-        delete node;
+    if (!node) {
+        return;
     }
+    // 有内存池：不 delete，头插挂回 Dict 的 DictEntry 空闲链，等 newEntry 复用。
+    // 节点里 key/val 的 std::string 已分配的字符串内存也一并保留，复用时通常不再分配
+    if (free_list_head_ != nullptr) {
+        node->next = *free_list_head_;
+        *free_list_head_ = node;
+        return;
+    }
+    // 没挂接内存池（独立使用的 HashTable）：保持原来的真正释放行为
+    delete node;
 }
 void HashTable::clear() {
     if (table) {
@@ -52,11 +61,23 @@ void HashTable::resetTable() {
 }
 Dict::Dict()
     : rehash_idx(-1) {
+    // 两张表共用同一条空闲链：把“头指针的地址”借给它们，freeEntry 才能直接回收
+    ht[0].free_list_head_ = &entry_free_list;
+    ht[1].free_list_head_ = &entry_free_list;
     ht[0].init(INIT_SIZE);
 }
 Dict::~Dict() {
+    // 先清两张表：还挂在桶上的节点会被 freeEntry 回收进空闲链
     ht[0].clear();
     ht[1].clear();
+    // 再真正 delete 掉整条空闲链，防止内存泄漏
+    DictEntry* cur = entry_free_list;
+    while (cur != nullptr) {
+        DictEntry* next = cur->next;
+        delete cur;
+        cur = next;
+    }
+    entry_free_list = nullptr;
 }
 // 设置键值对，expire_ms：0代表不过期
 void Dict::set(const std::string& key, const std::string& value, uint64_t expire_ms) {
@@ -77,7 +98,8 @@ void Dict::set(const std::string& key, const std::string& value, uint64_t expire
     }
     size_t idx = hashKey(key) & (ht[ht_idx].size - 1);
     uint64_t expire_at = expire_ms > 0 ? getNow() + expire_ms : 0;
-    DictEntry* new_node = new DictEntry(key, value, expire_at);
+    // 优先复用空闲链里的节点，没有才分配新节点
+    DictEntry* new_node = newEntry(key, value, expire_at);
 
     new_node->next = ht[ht_idx].table[idx];
     ht[ht_idx].table[idx] = new_node;
@@ -109,7 +131,8 @@ bool Dict::del(const std::string& key) {
             } else {
                 ht[ht_idx].table[h] = cur->next;
             }
-            delete cur;
+            // 回收进内存池而不是 delete；对外语义与原来完全一致（节点已摘链、used--）
+            ht[ht_idx].freeEntry(cur);
             ht[ht_idx].used--;
             return true;
         }
@@ -260,6 +283,23 @@ bool Dict::needExpand() {
         return false;
     }
     return ht[0].used >= ht[0].size * LOAD_FACTOR;
+}
+
+// 取一个可用的 DictEntry（DictEntry 内存池的分配入口）：
+// 1) 空闲链非空 -> 弹出链头节点，重置 key/val/expire_ts/next 后直接复用
+//    （省掉一次 malloc/free，而且 std::string 的旧缓冲区通常能继续用）
+// 2) 空闲链为空 -> 才 new 一个新节点
+DictEntry* Dict::newEntry(const std::string& key, const std::string& val, uint64_t expire_ts) {
+    DictEntry* e = entry_free_list;
+    if (e != nullptr) {
+        entry_free_list = e->next; // 弹出链头
+        e->key = key;              // 赋值复用，不重新分配对象
+        e->val = val;
+        e->expire_ts = expire_ts;
+        e->next = nullptr;         // 必须清掉它在空闲链里的 next
+        return e;
+    }
+    return new DictEntry(key, val, expire_ts);
 }
 
 std::vector<DictEntry> Dict::getAllValidEntries() {

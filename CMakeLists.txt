@@ -22,13 +22,13 @@ set(SRC_LIST
 )
 
 # 【模式A：Debug + ASAN，调试找内存bug用，不要跑benchmark】
-# set(CMAKE_BUILD_TYPE Debug)
-# set(CMAKE_CXX_FLAGS "-g -fsanitize=address -fno-omit-frame-pointer")
-# add_compile_options(-Wall -Wextra -g)
+ set(CMAKE_BUILD_TYPE Debug)
+ set(CMAKE_CXX_FLAGS "-g -fsanitize=address -fno-omit-frame-pointer")
+ add_compile_options(-Wall -Wextra -g)
 
 # 【模式B：Release O2，性能压测benchmark用！！】
-set(CMAKE_BUILD_TYPE Release)
-set(CMAKE_CXX_FLAGS "-O2 -Wall -Wextra")
+#set(CMAKE_BUILD_TYPE Release)
+#set(CMAKE_CXX_FLAGS "-O2 -Wall -Wextra")
 
 add_executable(main ${SRC_LIST})
 target_link_libraries(main PRIVATE ZLIB::ZLIB)
