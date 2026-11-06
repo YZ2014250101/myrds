@@ -1,0 +1,8 @@
+# .dockerignore
+build/
+.git/
+.vscode/
+*.exe
+*.o
+*.d
+README.md
