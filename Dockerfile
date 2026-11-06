@@ -23,16 +23,13 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release && \
 # ==========================================
 # 阶段 2：运行阶段 (Runner)
 # ==========================================
-FROM debian:bookworm-slim
+# 不要用 debian:bookworm-slim 了，直接用 gcc:13
+FROM gcc:13-bookworm
 
-# 运行时只需要 zlib 运行库
-RUN apt-get update && apt-get install -y \
-    zlib1g \
-    && rm -rf /var/lib/apt/lists/*
+# 安装运行时需要的 zlib
+RUN apt-get update && apt-get install -y zlib1g && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# 把编译好的文件拷过来
 COPY --from=builder /app/build/main .
 
 EXPOSE 8080
