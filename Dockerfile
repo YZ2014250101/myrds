@@ -2,7 +2,7 @@
 # 阶段 1：编译阶段 (Builder)
 # ==========================================
 # 回归最稳的 gcc 环境
-FROM alpine:3.20
+FROM gcc:13-bookworm AS builder
 
 # 安装 CMake 和 zlib 开发库
 RUN apt-get update && apt-get install -y \
