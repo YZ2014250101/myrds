@@ -1,34 +1,16 @@
-# ==========================================
-# 阶段 1：编译阶段
-# ==========================================
-# 换成 alpine 版本的 gcc
 FROM alpine:3.19 AS builder
 
-# alpine 需要手动装 cmake 和 zlib 开发库
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add --no-cache g++ cmake make zlib-dev
 
 WORKDIR /app
 
+# 1. 先把源码和 CMakeLists.txt 一起拷进来
 COPY CMakeLists.txt .
-# Alpine 下 CMake 生成时会默认使用 make，不需要额外参数
+COPY src/ ./src/
+
+# 2. 然后执行配置
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release
 
-COPY src/ ./src/
+# 3. 最后执行编译
 RUN cmake --build build --parallel $(nproc)
-
-# ==========================================
-# 阶段 2：运行阶段
-# ==========================================
-# 极简的 alpine 运行环境
-FROM alpine:3.19
-
-# 安装 zlib 运行库
-RUN apk add --no-cache zlib
-
-WORKDIR /app
-
-COPY --from=builder /app/build/main .
-# COPY config.json .
-
-EXPOSE 8080
-CMD ["./main"]
